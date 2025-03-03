@@ -13,6 +13,11 @@ from flask_cors import CORS
 from auth import auth_bp, login_required, init_users_file, init_spaces_file
 from space import space_bp, member_required
 from models import MemberRole, Dream, Task, TaskRecord
+import random
+import string
+import hashlib
+from datetime import timedelta
+import logging
 
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
@@ -38,6 +43,17 @@ USERS_FILE = os.path.join(DATA_DIR, 'users.json')
 SPACES_FILE = os.path.join(DATA_DIR, 'spaces.json')
 HISTORY_RECORDS_FILE = os.path.join(DATA_DIR, 'history_records.json')
 
+# 新增数据文件路径
+DREAM_INTERPRETATIONS_FILE = os.path.join(DATA_DIR, 'dream_interpretations.json')
+DREAM_CONTINUATIONS_FILE = os.path.join(DATA_DIR, 'dream_continuations.json')
+DREAM_PREDICTIONS_FILE = os.path.join(DATA_DIR, 'dream_predictions.json')
+TASK_STATS_FILE = os.path.join(DATA_DIR, 'task_stats.json')
+
+# 添加日志配置
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('tapir_twins')
+
 # 初始化数据文件
 def init_data_file(file_path, initial_data=None):
     if not os.path.exists(file_path):
@@ -51,6 +67,10 @@ init_data_file(USER_SETTINGS_FILE, {})
 init_data_file(USERS_FILE, [])
 init_data_file(SPACES_FILE, [])
 init_data_file(HISTORY_RECORDS_FILE, [])
+init_data_file(DREAM_INTERPRETATIONS_FILE)
+init_data_file(DREAM_CONTINUATIONS_FILE)
+init_data_file(DREAM_PREDICTIONS_FILE)
+init_data_file(TASK_STATS_FILE)
 init_users_file()
 init_spaces_file()
 
@@ -112,6 +132,25 @@ def reset_tasks_daily():
 # 启动每日重置任务的线程
 reset_thread = threading.Thread(target=reset_tasks_daily, daemon=True)
 reset_thread.start()
+
+# 添加任务统计数据文件初始化
+def init_task_stats_file():
+    """初始化任务统计数据文件，如果不存在则创建"""
+    if not os.path.exists(TASK_STATS_FILE):
+        with open(TASK_STATS_FILE, 'w') as f:
+            json.dump({"monthly_stats": {}}, f)
+        logger.info(f"已创建任务统计数据文件: {TASK_STATS_FILE}")
+
+# 初始化所有数据文件
+def init_all_data_files():
+    """初始化所有数据文件"""
+    # ... 现有代码保持不变 ...
+    
+    # 初始化任务统计数据文件
+    init_task_stats_file()
+
+# 调用初始化函数
+init_all_data_files()
 
 # 梦境API
 @app.route('/api/dreams', methods=['GET'])
@@ -878,6 +917,333 @@ def get_task_history(space_id, task_id):
     task_history.sort(key=lambda x: x.get('created_at', ''), reverse=True)
     
     return jsonify(task_history)
+
+# 梦境解析API
+@app.route('/api/dream_interpretations', methods=['GET'])
+@login_required
+def get_dream_interpretations():
+    dream_id = request.args.get('dream_id')
+    if not dream_id:
+        return jsonify({"error": "未提供梦境ID"}), 400
+        
+    interpretations = read_data(DREAM_INTERPRETATIONS_FILE)
+    
+    # 根据梦境ID筛选
+    result = [interp for interp in interpretations if interp.get('dream_id') == dream_id]
+    
+    return jsonify(result)
+
+@app.route('/api/dream_interpretations', methods=['POST'])
+@login_required
+def add_dream_interpretation():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "无效的请求数据"}), 400
+        
+    required_fields = ['dream_id', 'style', 'content']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"缺少必填字段: {field}"}), 400
+    
+    # 从请求中获取数据
+    dream_id = data.get('dream_id')
+    style = data.get('style')
+    content = data.get('content')
+    
+    # 检查梦境是否存在
+    dreams = read_data(DREAMS_FILE)
+    dream = next((d for d in dreams if d.get('id') == dream_id), None)
+    if not dream:
+        return jsonify({"error": "梦境不存在"}), 404
+    
+    # 创建新的解梦记录
+    interpretation = {
+        'id': str(uuid.uuid4()),
+        'dream_id': dream_id,
+        'style': style,
+        'content': content,
+        'created_at': datetime.datetime.now().isoformat()
+    }
+    
+    # 保存解梦记录
+    interpretations = read_data(DREAM_INTERPRETATIONS_FILE)
+    interpretations.append(interpretation)
+    write_data(DREAM_INTERPRETATIONS_FILE, interpretations)
+    
+    return jsonify(interpretation), 201
+
+# 梦境续写API
+@app.route('/api/dream_continuations', methods=['GET'])
+@login_required
+def get_dream_continuations():
+    dream_id = request.args.get('dream_id')
+    if not dream_id:
+        return jsonify({"error": "未提供梦境ID"}), 400
+        
+    continuations = read_data(DREAM_CONTINUATIONS_FILE)
+    
+    # 根据梦境ID筛选
+    result = [cont for cont in continuations if cont.get('dream_id') == dream_id]
+    
+    return jsonify(result)
+
+@app.route('/api/dream_continuations', methods=['POST'])
+@login_required
+def add_dream_continuation():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "无效的请求数据"}), 400
+        
+    required_fields = ['dream_id', 'style', 'content']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"缺少必填字段: {field}"}), 400
+    
+    # 从请求中获取数据
+    dream_id = data.get('dream_id')
+    style = data.get('style')
+    content = data.get('content')
+    
+    # 检查梦境是否存在
+    dreams = read_data(DREAMS_FILE)
+    dream = next((d for d in dreams if d.get('id') == dream_id), None)
+    if not dream:
+        return jsonify({"error": "梦境不存在"}), 404
+    
+    # 创建新的续写记录
+    continuation = {
+        'id': str(uuid.uuid4()),
+        'dream_id': dream_id,
+        'style': style,
+        'content': content,
+        'created_at': datetime.datetime.now().isoformat()
+    }
+    
+    # 保存续写记录
+    continuations = read_data(DREAM_CONTINUATIONS_FILE)
+    continuations.append(continuation)
+    write_data(DREAM_CONTINUATIONS_FILE, continuations)
+    
+    return jsonify(continuation), 201
+
+# 梦境预测API
+@app.route('/api/dream_predictions', methods=['GET'])
+@login_required
+def get_dream_predictions():
+    dream_id = request.args.get('dream_id')
+    if not dream_id:
+        return jsonify({"error": "未提供梦境ID"}), 400
+        
+    predictions = read_data(DREAM_PREDICTIONS_FILE)
+    
+    # 根据梦境ID筛选
+    result = [pred for pred in predictions if pred.get('dream_id') == dream_id]
+    
+    return jsonify(result)
+
+@app.route('/api/dream_predictions', methods=['POST'])
+@login_required
+def add_dream_prediction():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "无效的请求数据"}), 400
+        
+    required_fields = ['dream_id', 'content']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"缺少必填字段: {field}"}), 400
+    
+    # 从请求中获取数据
+    dream_id = data.get('dream_id')
+    content = data.get('content')
+    
+    # 检查梦境是否存在
+    dreams = read_data(DREAMS_FILE)
+    dream = next((d for d in dreams if d.get('id') == dream_id), None)
+    if not dream:
+        return jsonify({"error": "梦境不存在"}), 404
+    
+    # 创建新的预测记录
+    prediction = {
+        'id': str(uuid.uuid4()),
+        'dream_id': dream_id,
+        'content': content,
+        'created_at': datetime.datetime.now().isoformat()
+    }
+    
+    # 保存预测记录
+    predictions = read_data(DREAM_PREDICTIONS_FILE)
+    predictions.append(prediction)
+    write_data(DREAM_PREDICTIONS_FILE, predictions)
+    
+    return jsonify(prediction), 201
+
+def update_daily_task_stats():
+    """
+    更新前一天的任务统计数据
+    统计前一天未成功打卡（未打卡或被拒绝）的任务数量
+    """
+    logger.info("开始更新每日任务统计数据...")
+    
+    # 获取前一天的日期
+    yesterday = (datetime.datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    yesterday_month = yesterday[:7]  # 格式: YYYY-MM
+    
+    # 读取任务和任务记录数据
+    tasks_data = read_data(TASKS_FILE)
+    records_data = read_data(TASK_RECORDS_FILE)
+    stats_data = read_data(TASK_STATS_FILE)
+    
+    # 如果monthly_stats字段不存在，初始化它
+    if 'monthly_stats' not in stats_data:
+        stats_data['monthly_stats'] = {}
+    
+    # 如果当前月份不存在，初始化它
+    if yesterday_month not in stats_data['monthly_stats']:
+        stats_data['monthly_stats'][yesterday_month] = {
+            "month": yesterday_month,
+            "daily_stats": []
+        }
+    
+    # 计算前一天未成功打卡的任务数量
+    failed_tasks_count = 0
+    
+    # 遍历所有任务
+    for task_id, task in tasks_data.items():
+        # 检查任务是否在前一天就已经存在
+        created_at = datetime.datetime.fromisoformat(task['created_at'].replace('Z', '+00:00'))
+        if created_at.date() > datetime.datetime.fromisoformat(yesterday).date():
+            continue  # 跳过昨天之后创建的任务
+        
+        # 检查任务是否有记录
+        task_completed = False
+        for record_id, record in records_data.items():
+            if record['task_id'] == task_id and record['date'] == yesterday:
+                # 判断记录状态是否为成功（已通过）
+                if record['status'] == 'approved':
+                    task_completed = True
+                    break
+        
+        # 如果任务没有完成或者被拒绝，计入未成功任务
+        if not task_completed:
+            failed_tasks_count += 1
+    
+    # 查找是否已经有昨天的统计数据
+    found_existing = False
+    for daily_stat in stats_data['monthly_stats'][yesterday_month]['daily_stats']:
+        if daily_stat['date'] == yesterday:
+            # 更新现有数据
+            daily_stat['failed_tasks_count'] = failed_tasks_count
+            found_existing = True
+            break
+    
+    # 如果没有找到昨天的统计数据，创建一个新的
+    if not found_existing:
+        stats_data['monthly_stats'][yesterday_month]['daily_stats'].append({
+            "id": yesterday,
+            "date": yesterday,
+            "failed_tasks_count": failed_tasks_count
+        })
+    
+    # 保存更新后的统计数据
+    write_data(TASK_STATS_FILE, stats_data)
+    logger.info(f"已更新 {yesterday} 的任务统计数据，未成功打卡任务数: {failed_tasks_count}")
+
+def schedule_daily_stats_update():
+    """
+    安排每天0点30分更新前一天的任务统计
+    """
+    while True:
+        now = datetime.datetime.now()
+        # 计算下一个0点30分的时间
+        next_run = now.replace(hour=0, minute=30, second=0, microsecond=0)
+        if now >= next_run:
+            next_run = next_run + timedelta(days=1)
+        
+        # 计算等待时间
+        wait_seconds = (next_run - now).total_seconds()
+        logger.info(f"定时任务: 将在 {wait_seconds} 秒后更新任务统计 (下次运行时间: {next_run})")
+        
+        # 等待到指定时间
+        time.sleep(wait_seconds)
+        
+        # 更新统计数据
+        try:
+            update_daily_task_stats()
+        except Exception as e:
+            logger.error(f"更新任务统计时出错: {str(e)}")
+
+# 在单独的线程中启动定时任务
+stats_thread = threading.Thread(target=schedule_daily_stats_update, daemon=True)
+stats_thread.start()
+
+@app.route('/api/tasks/stats/monthly/<month>', methods=['GET'])
+@login_required
+def get_monthly_task_stats(month):
+    """
+    获取指定月份的任务统计数据
+    月份格式: YYYY-MM (例如: 2023-12)
+    """
+    try:
+        # 验证月份格式
+        datetime.datetime.strptime(month, '%Y-%m')
+    except ValueError:
+        return jsonify({"error": "无效的月份格式，请使用YYYY-MM格式"}), 400
+    
+    # 读取统计数据
+    stats_data = read_data(TASK_STATS_FILE)
+    
+    # 如果没有该月的数据，初始化一个空的
+    if 'monthly_stats' not in stats_data or month not in stats_data['monthly_stats']:
+        # 创建当月的空统计数据
+        current_month_stats = {
+            "month": month,
+            "daily_stats": []
+        }
+        
+        # 对于当月中已经过去的日期，生成统计数据（使用0作为占位）
+        today = datetime.datetime.now().date()
+        month_date = datetime.datetime.strptime(month, '%Y-%m').date()
+        
+        # 只有在查询的是当月或之前的月份时才生成数据
+        if month_date.year < today.year or (month_date.year == today.year and month_date.month <= today.month):
+            # 计算该月的最后一天
+            if month_date.month == 12:
+                next_month = datetime.datetime(month_date.year + 1, 1, 1).date()
+            else:
+                next_month = datetime.datetime(month_date.year, month_date.month + 1, 1).date()
+            
+            last_day_of_month = (next_month - timedelta(days=1)).day
+            
+            # 生成每天的统计数据
+            for day in range(1, last_day_of_month + 1):
+                date_str = f"{month}-{day:02d}"
+                date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+                
+                # 只为已经过去的日期生成数据
+                if date_obj < today:
+                    current_month_stats['daily_stats'].append({
+                        "id": date_str,
+                        "date": date_str,
+                        "failed_tasks_count": 0  # 默认值为0
+                    })
+        
+        return jsonify(current_month_stats)
+    
+    # 返回该月的统计数据
+    return jsonify(stats_data['monthly_stats'][month])
+
+# 手动触发更新前一天的统计数据（用于测试）
+@app.route('/api/tasks/stats/update', methods=['POST'])
+@login_required
+def trigger_stats_update():
+    """手动触发统计数据更新（开发测试用）"""
+    try:
+        update_daily_task_stats()
+        return jsonify({"success": True, "message": "统计数据已更新"}), 200
+    except Exception as e:
+        logger.error(f"手动更新统计数据失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8081)
