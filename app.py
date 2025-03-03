@@ -49,6 +49,9 @@ DREAM_CONTINUATIONS_FILE = os.path.join(DATA_DIR, 'dream_continuations.json')
 DREAM_PREDICTIONS_FILE = os.path.join(DATA_DIR, 'dream_predictions.json')
 TASK_STATS_FILE = os.path.join(DATA_DIR, 'task_stats.json')
 
+# 新的统计设置文件
+SPACES_STATISTICS_FILE = os.path.join(DATA_DIR, 'spaces_statistics.json')
+
 # 添加日志配置
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -141,13 +144,25 @@ def init_task_stats_file():
             json.dump({"monthly_stats": {}}, f)
         logger.info(f"已创建任务统计数据文件: {TASK_STATS_FILE}")
 
+def init_spaces_statistics_file():
+    """初始化空间统计设置文件"""
+    if not os.path.exists(SPACES_STATISTICS_FILE):
+        init_data_file(SPACES_STATISTICS_FILE, {"spaces": {}})
+        print(f"已创建空间统计设置文件: {SPACES_STATISTICS_FILE}")
+
 # 初始化所有数据文件
 def init_all_data_files():
     """初始化所有数据文件"""
-    # ... 现有代码保持不变 ...
-    
-    # 初始化任务统计数据文件
+    init_users_file()
+    init_spaces_file()
+    init_data_file(DREAMS_FILE, {"dreams": []})
+    init_data_file(TASKS_FILE, {"tasks": []})
+    init_data_file(TASK_RECORDS_FILE, {"records": []})
     init_task_stats_file()
+    init_data_file(DREAM_INTERPRETATIONS_FILE, {"interpretations": []})
+    init_data_file(DREAM_CONTINUATIONS_FILE, {"continuations": []})
+    init_data_file(DREAM_PREDICTIONS_FILE, {"predictions": []})
+    init_spaces_statistics_file()  # 初始化空间统计设置文件
 
 # 调用初始化函数
 init_all_data_files()
@@ -208,8 +223,19 @@ def add_dream():
     data = request.json
     dreams = read_data(DREAMS_FILE)
     
-    # 生成唯一ID
-    new_id = str(uuid.uuid4())
+    # 检查是否已经存在相同内容的梦境
+    title = data.get('title', '').strip()
+    content = data.get('content', '').strip()
+    
+    # 查找是否有相同内容的梦境
+    existing_dream = next((d for d in dreams if d.get('title') == title and d.get('content') == content), None)
+    
+    if existing_dream:
+        # 如果存在相同内容的梦境，使用其ID
+        new_id = existing_dream['id']
+    else:
+        # 否则生成新的唯一ID
+        new_id = str(uuid.uuid4())
     
     # 添加时间戳和用户ID
     data['id'] = new_id
@@ -221,8 +247,13 @@ def add_dream():
         # 这里应该检查用户是否是空间成员，但为简化处理，我们假设前端已经做了相应的限制
         pass
     
-    dreams.append(data)
-    write_data(DREAMS_FILE, dreams)
+    # 检查是否已存在完全相同的梦境记录（用户ID、内容、标题都相同）
+    duplicate = next((d for d in dreams if d.get('user_id') == user_id and d.get('title') == title and d.get('content') == content), None)
+    
+    # 仅在不是重复记录时添加
+    if not duplicate:
+        dreams.append(data)
+        write_data(DREAMS_FILE, dreams)
     
     return jsonify(data), 201
 
@@ -233,8 +264,19 @@ def add_space_dream(space_id):
     data = request.json
     dreams = read_data(DREAMS_FILE)
     
-    # 生成唯一ID
-    new_id = str(uuid.uuid4())
+    # 检查是否已经存在相同内容的梦境
+    title = data.get('title', '').strip()
+    content = data.get('content', '').strip()
+    
+    # 查找是否有相同内容的梦境
+    existing_dream = next((d for d in dreams if d.get('title') == title and d.get('content') == content), None)
+    
+    if existing_dream:
+        # 如果存在相同内容的梦境，使用其ID
+        new_id = existing_dream['id']
+    else:
+        # 否则生成新的唯一ID
+        new_id = str(uuid.uuid4())
     
     # 添加时间戳、用户ID和空间ID
     data['id'] = new_id
@@ -243,8 +285,14 @@ def add_space_dream(space_id):
     data['space_id'] = space_id
     data['username'] = get_username(user_id)  # 添加用户名
     
-    dreams.append(data)
-    write_data(DREAMS_FILE, dreams)
+    # 检查是否已存在完全相同的梦境记录（用户ID、空间ID、内容、标题都相同）
+    duplicate = next((d for d in dreams if d.get('user_id') == user_id and d.get('space_id') == space_id and 
+                      d.get('title') == title and d.get('content') == content), None)
+    
+    # 仅在不是重复记录时添加
+    if not duplicate:
+        dreams.append(data)
+        write_data(DREAMS_FILE, dreams)
     
     return jsonify(data), 201
 
@@ -1244,6 +1292,55 @@ def trigger_stats_update():
     except Exception as e:
         logger.error(f"手动更新统计数据失败: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/spaces/<space_id>/statistics/start-date', methods=['GET'])
+@member_required()
+def get_space_statistics_start_date(space_id):
+    """获取空间的统计起始日期"""
+    # 读取空间统计设置
+    stats_data = read_data(SPACES_STATISTICS_FILE)
+    
+    # 获取空间的统计起始日期，如果不存在则使用当前日期
+    current_date = get_today_date()
+    start_date = stats_data.get("spaces", {}).get(space_id, {}).get("statisticsStartDate", current_date)
+    
+    return jsonify({
+        "success": True,
+        "statisticsStartDate": start_date
+    })
+
+@app.route('/api/spaces/<space_id>/statistics/start-date', methods=['PUT'])
+@member_required()
+def update_space_statistics_start_date(space_id):
+    """更新空间的统计起始日期"""
+    data = request.json
+    start_date = data.get("statisticsStartDate")
+    
+    if not start_date:
+        return jsonify({
+            "success": False,
+            "message": "统计起始日期不能为空"
+        }), 400
+    
+    # 读取并更新空间统计设置
+    stats_data = read_data(SPACES_STATISTICS_FILE)
+    
+    if "spaces" not in stats_data:
+        stats_data["spaces"] = {}
+    
+    if space_id not in stats_data["spaces"]:
+        stats_data["spaces"][space_id] = {}
+    
+    stats_data["spaces"][space_id]["statisticsStartDate"] = start_date
+    
+    # 保存更新后的数据
+    write_data(SPACES_STATISTICS_FILE, stats_data)
+    
+    return jsonify({
+        "success": True,
+        "message": "统计起始日期已更新",
+        "statisticsStartDate": start_date
+    })
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8081)
